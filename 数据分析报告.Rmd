@@ -1,0 +1,498 @@
+---
+title: "统计软件大作业源码"
+author: "汪胤恒小组"
+date: "2021/01/16"
+output:
+  html_document
+---
+# 自定义函数
+```{r,warning=FALSE,message=FALSE}
+library(jiebaR)
+library(readxl)
+library(plyr)
+library(ggplot2)
+library(stringr)
+library(wordcloud2)
+library(car)
+library(zoo)
+library(lmtest)
+library(MASS)
+fen_stop <- function(cutter,txt_w,num = 150,stopword = c()){
+  c <- cutter[txt_w] #分词后的列表
+  w <- listToDf(c)
+  #所有词汇及其词性构成的数据框，“word”“tag”
+  wo <- ddply(w,.(word),nrow) #所有词汇及其词频表
+  wo = wo[order(wo$V1,decreasing = T),]
+  #词频排序
+  wo <- wo[1:num,]
+  wo <- wo[-which(wo$word %in% stopword),]
+  return(wo)
+}
+listToDf <- function(text_res){
+    text = lapply(text_res, as.matrix)
+    tag = lapply(text_res,names)
+    text_df = as.data.frame(do.call(rbind,text),stringsAsFactors = F)
+    tag_df = as.data.frame(do.call(rbind,lapply(tag, as.matrix)),stringsAsFactors = F)
+    text_tag_df = cbind(text_df,tag_df)
+    colnames(text_tag_df) = c("word","tag")
+    
+    tag_choose <- read.csv("tags.csv",header = F,stringsAsFactors = F)[-25,]
+    text_tag_df_choose = text_tag_df[which(tag_df$V1 %in% tag_choose$V1),]
+    
+    return(text_tag_df_choose)
+}
+# 回归诊断函数
+regression.diagnostics <- function(fit) {
+  par(mfrow = c(2, 3))
+  plot(fit, which = 1:5)
+  influencePlot(fit)
+  
+  cat("异常值/强影响点检验\n")
+  print(outlierTest(fit))
+  
+  cat("\n异方差检验\n")
+  print(ncvTest(fit))
+  print(bptest(fit))
+  print(gqtest(fit))
+  
+  cat("\n共线性检验\n")
+  print(vif(fit))
+  
+  cat("\n自相关检验\n")
+  print(durbinWatsonTest(fit))
+}
+```
+
+
+# 可视化
+```{r,warning=FALSE,message=FALSE}
+#读取数据
+taptap_data<-read_xls("taptap_data.xls")
+taptap_data$...1<-NULL
+#对每个游戏名进行去重操作得到游戏名清单
+games<-taptap_data[!duplicated(taptap_data[,1]),]
+#查看总评分最低的五个游戏
+head(games[order(games[,2],decreasing=F),][,c(1,2)],n=5)
+#查看总评分最高的五个游戏
+head(games[order(games[,2],decreasing=T),][,c(1,2)],n=5)
+#查看游戏热门榜各游戏类别的数量
+p <- ggplot(data=games,mapping = aes(x=reorder(类别,类别,function(x)-length(x))))
+p<-p+geom_bar(fill=topo.colors(14,alpha = 1))
+p<-p+labs(x="游戏类别",y="数量")
+p<-p+theme_classic()
+p
+#查看不同游戏类别的评分和受众人数差异
+ggplot(taptap_data,aes(x=factor(类别),y=总评分)) + geom_boxplot(alpha=0.9,fill=topo.colors(14,alpha = 0.1),varwidth=TRUE) + xlab("类别")#可以查看不同类别的游戏的评分分布
+ggplot(taptap_data,aes(x=factor(类别),y=总评论数)) + geom_boxplot(alpha=0.9,fill=topo.colors(14,alpha = 0.1),varwidth=TRUE) + xlab("类别")
+#查看不同类型游戏的平均评分,平均评论数
+ave_score<-ddply(games,.(类别),function(x){mean(x$总评分)})
+ave_comments<-ddply(games,.(类别),function(x){mean(x$总评论数)})
+colnames(ave_score)<-c("类别","分类评分")
+colnames(ave_comments)<-c("类别","分类评论数")
+games<-merge(games,ave_score,by="类别")
+games<-merge(games,ave_comments,by="类别")
+p1 <- ggplot(data=games,mapping = aes(x=类别))
+p1<-p1+geom_point(aes(y=分类评分),colour="black")
+p1<-p1+geom_line(aes(y=分类评分),group=1,colour="black")
+p1<-p1+scale_y_continuous(name="平均评分",breaks=seq(1,10,1),sec.axis = sec_axis(~.*5000,name = "平均评论数",breaks=seq(5000,75000,5000),labels=seq(5000,75000,5000)))  #设置一下主副轴刻度
+p1<-p1+theme(axis.text.y.right = element_text(colour =rep("blue",times=15))) 
+p1<-p1+theme(axis.line.y.right = element_line(colour ="blue"))
+p1<-p1+geom_point(aes(y=分类评论数/5000),colour="blue")
+p1<-p1+geom_line(aes(y=分类评论数/5000),group=1,colour="blue")
+p1<-p1+geom_hline(yintercept = mean(games$总评分),,colour="red",lty=2)
+p1<-p1+geom_text(aes(x="音乐",y=7),label='平均评分:7.63',parse = TRUE, size=7,colour="red")
+p1<-p1+geom_hline(yintercept = mean(games$总评论数/5000),,colour="blue",lty=2)
+p1<-p1+geom_text(aes(x="模拟",y=4),label='平均评论数:22536',parse = TRUE, size=7,colour="blue")
+p1<-p1+theme_classic()
+p1<-p1+theme(axis.text.y.right = element_text(colour =rep("blue",times=15)))
+p1<-p1+theme(axis.line.y.right = element_line(colour ="blue")) 
+p1
+#查看热门游戏的厂商分布情况
+a1 <- ddply(ddply(games,.(游戏名称,厂商),nrow),.(厂商),nrow) #统计每一个厂商的游戏数量
+b1 <- a1[order(a1$V1,decreasing = T),]
+colnames(b1) <- c("productor","number")
+b1$productor <- factor(b1$productor,levels = b1$productor)
+ggplot(b1[1:10,],mapping = aes(x = productor, #仅绘制前十的游戏厂商
+                               y = number,
+                               fill = factor(productor,levels = b1$productor[1:10])))+
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = rainbow(10,alpha = 0.2)[1:10])+
+  theme(legend.position = "None",panel.background=element_rect(fill="white",color="black"),#白底黑框
+        panel.grid = element_blank())+
+  scale_x_discrete(labels = function(x){str_wrap(x,width = 4)})+
+  ggtitle("")+
+  labs(x = "厂商",y = "游戏数量")
+#标签分词,查看标签内前50的关键词,从中看出主流游戏有些什么元素
+stop_words<-read.table("stopwords.dat",encoding = "UTF-8")
+stop_words<-c(stop_words,"的","","你","在","是","和","了","中","与","都","有","将","也","会","等","更","群","不","为","上","让","人","我","被","由","多","而","您","到","能","就","玩","很","这","说","还","好","给","吧","没","但","要","个","打","啊","看","想","又","把","去","做","对","游戏","没有","觉得","这个","还是","还有","但是","所以","可以","真的","时候","就是","现在","什么","不过","其他","问题","我们","玩家","自己","每","后","一个","可能","怎么","不是","如果","需要","呢","而且","因为","那么","有点","你们","一次","虽然","感觉","其实","这么","的话","应该","开始","希望","一点","当然","一起","他","已经","之后","或者","非常","得","级","对于","比较","来说","下","只有","两个","他们","只是","目前","有些","一些","挺","小时","这么","很多","不要","起来","剧情","来着","再","东西","一下","然后","知道","着","再","太","确实","过","只","里","不能","")
+game_labels<-games$标签
+wk<- worker(bylines = TRUE)
+labels_fenci<-wk[game_labels]
+segmented.comments <- segment(game_labels, wk)
+head(labels_fenci)
+wk1<-worker()
+labels_fenci2<-wk1[game_labels]
+labels_stop<-filter_segment(labels_fenci2,stop_words)  #过滤掉停用词
+f<-as.data.frame(table(labels_stop))  #table分类，查看频数
+f<-f[sort(f$Freq,index.return=T,decreasing = T)$ix,]  #降序排序
+head(f,n=50)  #查看前50行
+#由于未知bug，rmd无法显示多个词云图，用网页制作标签词云
+
+#评论分词
+comments<-taptap_data$compre
+comments_fenci<-wk1[comments]
+comments_stop<-filter_segment(comments_fenci,stop_words)  #过滤掉停用词
+f1<-as.data.frame(table(comments_stop))  #table分类，查看频数
+f1<-f1[sort(f1$Freq,index.return=T,decreasing = T)$ix,]  #降序排序
+head(f1,n=50)  #查看前50行
+#由于未知bug，rmd无法显示多个词云图，用网页制作评论词云
+
+#简介分词
+intro<-taptap_data$intropre
+intro_fenci<-wk1[intro]
+intro_stop<-filter_segment(intro_fenci,stop_words)  #过滤掉停用词
+f2<-as.data.frame(table(intro_stop))  #table分类，查看频数
+f2<-f2[sort(f2$Freq,index.return=T,decreasing = T)$ix,]  #降序排序
+head(f2,n=50)  #查看前50行
+#由于未知bug，rmd无法显示多个词云图，用网页制作简介词云
+
+#游戏的评论星级
+F1<-grep(pattern="(氪)",taptap_data$compre)
+q1<-mean(taptap_data$评论星级[F1])
+F2<-grep(pattern="(剧情)",taptap_data$compre)
+q2<-mean(taptap_data$评论星级[F2])
+F3<-grep(pattern="(时间)",taptap_data$compre)
+q3<-mean(taptap_data$评论星级[F3])
+F4<-grep(pattern="(玩法)",taptap_data$compre)
+q4<-mean(taptap_data$评论星级[F4])
+F5<-grep(pattern="(肝)",taptap_data$compre)
+q5<-mean(taptap_data$评论星级[F5])
+y<-c(q1,q2,q3,q4,q5)
+y#[1] 3.362046 3.991752 3.734137 3.859970 3.631807
+mean<-mean(taptap_data$评论星级)
+mean#[1] 3.733608
+labels<-round(y,2)
+names<-c("氪","剧情","时间","玩法","肝")
+barplot(y,names.arg=names,col=rainbow(5,alpha=0.3),ylab="评论星级",ylim=c(0,4))
+abline(h = mean,col="black")
+text(x=c(0.8,1.9,3.1,4.3,5.5),y=y-0.4,labels=labels)
+text(5.2,3.9,labels="所有游戏的平均评论星级：3.73",cex=1)
+
+#社交类游戏词云和非社交类游戏词云
+danji_index <- union(grep("单机",taptap_data$标签),which(taptap_data$总评论数<20000))
+ttsub1 <- taptap_data[-danji_index,] #社交类游戏
+ttsub2 <- taptap_data[danji_index,] #非社交类游戏
+stop <- "C://Users//DELL//Desktop//stopwords.dat"#提供分词器路径
+cutter <- worker(bylines = T,stop_word = stop,"tag") #构建分词器
+stopword_freq = read.csv("stopwordslist.csv",header = F,stringsAsFactors = F,fileEncoding = "UTF-8")#停用词表
+fre_s <- fen_stop(cutter,ttsub1$compre,stopword = stopword_freq$V1) #社交游戏词频
+fre_p <- fen_stop(cutter,ttsub2$compre,stopword = stopword_freq$V1)#非社交游戏词频
+#使用在线工具绘制词云图
+
+#建立氪度相关的词库
+word_kedu <- c("氪","钱","皮肤","抽")
+
+#以评论为单位，统计该条评论是否出现氪金相关词语
+tt <- taptap_data
+z <- dim(tt)[2]
+for(i in 1:4){
+  cat(i)
+  tt[,z+i] = 0
+  tt[grep(word_kedu[i],tt$compre),z+i] = 1
+}
+mean(tt[,14])
+head(tt)
+class(tt[1,14])
+colnames(tt)[(z+1):(z+4)] <- word_kedu
+
+kedu <- ddply(tt,.(游戏名称,总评分),function(x){
+  sum(x$"氪")+sum(x$"钱")*0.3+sum(x$"皮肤")*0.2+sum(x$"抽")*0.5
+})
+kedu <- kedu[order(kedu$V1,decreasing = T),]
+
+gaokedu_good <- kedu$游戏名称[which(kedu$V1>39 & kedu$总评分 > 8)]#高氪高分游戏
+gaokedu_bad <- kedu$游戏名称[which(kedu$V1>39 & kedu$总评分 < 6)] #高氪低分游戏
+
+ttsub4 <- tt[which(tt$游戏名称 %in% gaokedu_good),]
+ttsub5 <- tt[which(tt$游戏名称 %in% gaokedu_bad),]
+
+b2 <- fen_stop(cutter,ttsub4$compre,stopword = stopword_freq$V1)#高氪高分游戏词频
+b3 <- fen_stop(cutter,ttsub5$compre,stopword = stopword_freq$V1)#高氪低分游戏词频
+#使用在线工具绘制词云图
+```
+
+
+# 说明
+
+首先从数据中提取一些衍生变量，然后开始构建模型。两个基本模型分别是以总评分和对数总评论数为因变量，以其他所有变量为自变量（以对数总评论数为因变量时会从自变量中删去社交类游戏，因为该列特征的提取本身用到了总评论数）建立的多元线性回归模型。
+
+总体思路是，对这两个模型，分别深入到某一种分类下的游戏（例如社交类/非社交类，高氪/非高氪，热门/非热门，角色扮演/策略/棋牌/其他……），去对比不同分类下得出的模型结果有没有有意思的、可解释的差异。有上述差异的保留下来，没有的则剔除。
+
+最终，对评分模型，社交类/非社交类，高氪/非高氪这两种分类都能产出有意思的结论。而对评论数模型，每种分类下的模型系数似乎都跟原始模型没有什么大的区别，没有什么有意思的点，因此只保留了原始模型。
+
+除此之外，对每一个模型都做了基础的模型诊断，但仅对模型一在文档中保留了具体的诊断过程，其他模型则省略了诊断过程，仅保留经诊断、处理后的回归结果。
+
+
+
+# 建立模型
+```{r}
+taptap_data$简介 <- taptap_data$intropre
+taptap_data$评论内容 <- taptap_data$compre
+taptap_data$总评论数[taptap_data$游戏名称 == "原神"] <- 157998
+taptap_data <- taptap_data[-c(1, 9, 10, 13, 14),]
+taptap_data <- na.omit(taptap_data)
+
+# 评论分词
+分词器 <- worker(stop_word = "stopwords.dat", bylines = TRUE)
+segmented.comments <- segment(taptap_data$评论内容, 分词器)
+freqs <- freq(unlist(segmented.comments))  # 对所有评论进行词频统计
+freqs <- freqs[order(freqs$freq, decreasing = TRUE), ]  # 按词频从高到低排序
+
+# 提取出各游戏
+games_data <- taptap_data[!duplicated(taptap_data$游戏名称), 1:7]
+
+# 特征提取
+# 是否测试版
+games_data$测试版 <- grepl("测试", games_data$游戏名称)
+games_data$测试版[which(games_data$测试版 == TRUE)] <- "是"
+games_data$测试版[which(games_data$测试版 == FALSE)] <- "否"
+
+# 是否社交类游戏
+games_data$社交类游戏 <- games_data$总评论数 > 20000 & !grepl("单机", games_data$标签)
+games_data$社交类游戏[which(games_data$社交类游戏 == TRUE)] <- "是"
+games_data$社交类游戏[which(games_data$社交类游戏 == FALSE)] <- "否"
+
+# 厂商规模
+games_data$厂商规模 <- games_data$厂商 %in% c("网易游戏", "腾讯", "雷霆游戏", "龙渊网络", "miHoYo", "哔哩哔哩游戏", "凉屋游戏", "心动网络")
+games_data$厂商规模[which(games_data$厂商规模 == TRUE)] <- "大厂"
+games_data$厂商规模[which(games_data$厂商规模 == FALSE)] <- "小厂"
+
+# 厂商类别
+games_data$厂商类别 <- games_data$厂商
+games_data$厂商类别[which(games_data$厂商类别 == "网易游戏")] = "网易"
+games_data$厂商类别[which(games_data$厂商类别 %in% c("雷霆游戏", "龙渊网络", "miHoYo", "哔哩哔哩游戏", "莉莉丝游戏", "凉屋游戏", "心动网络", "Kaka Ku Games Inc."))] = "其他大厂"
+games_data$厂商类别[which(!games_data$厂商类别 %in% c("网易", "腾讯", "其他大厂"))] = "小厂"
+
+# 评论平均长度
+games_data$评论平均长度 <- rep(0, nrow(games_data))
+for (i in 1:nrow(games_data)) {
+  name <- games_data$游戏名称[i]
+  comments <- taptap_data$评论内容[taptap_data$游戏名称 == name]
+
+  lengths <- 0
+  for (j in 1:length(comments)) {
+    length <- nchar(comments[j])
+    lengths <- lengths + length
+  }
+  games_data$评论平均长度[i] <- lengths / length(comments)
+}
+
+# 词频统计函数
+get.total.freqs <- function(word_list, weight_list, feature_name) {
+  games_data[, feature_name] <- rep(0, nrow(games_data))
+
+  for (i in 1:nrow(games_data)) {
+    name <- games_data$游戏名称[i]
+    comments <- taptap_data$评论内容[taptap_data$游戏名称 == name]
+
+    freqs <- 0
+    for (j in 1:length(word_list)) {
+      count <- length(grep(word_list[j], comments))
+      freq <- count / length(comments)
+      freqs <- freqs + freq * weight_list[j]
+    }
+    games_data[i, feature_name] <- freqs
+  }
+
+  return(games_data)
+}
+
+# 好词总频率
+word_list_good <- c("推荐", "剧情", "音乐", "画风", "画面", "难度", "简单")
+games_data <- get.total.freqs(word_list_good, rep(1 / length(word_list_good), length(word_list_good)), "好词总频率")
+
+# 坏词总频率
+word_list_bad <- c("恶心", "皮肤", "抽", "钱", "氪")
+games_data <- get.total.freqs(word_list_bad, rep(1 / length(word_list_bad), length(word_list_bad)), "坏词总频率")
+
+# 氪金指数
+word_list_gold <-  c("氪", "抽", "钱", "买", "皮肤")
+games_data <- get.total.freqs(word_list_gold, c(0.4, 0.2, 0.2, 0.1, 0.1), "氪金指数")
+
+# 爆肝指数
+word_list_liver <-  c("肝", "刷", "小时", "时间")
+games_data <- get.total.freqs(word_list_liver, c(0.5, 0.2, 0.2, 0.1), "爆肝指数")
+
+# 游戏机制指数
+word_list_mechanics <-  c("剧情", "难度", "玩法", "机制", "设定")
+games_data <- get.total.freqs(word_list_mechanics, rep(1 / length(word_list_mechanics), length(word_list_mechanics)), "游戏机制指数")
+
+# 艺术设计指数
+word_list_design <-  c("画风", "画面", "界面", "音乐")
+games_data <- get.total.freqs(word_list_design, rep(1 / length(word_list_design), length(word_list_design)), "艺术设计指数")
+
+# 福利指数
+word_list_welfare <-  c("福利")
+games_data <- get.total.freqs(word_list_welfare, c(1), "福利指数")
+
+# 广告指数
+word_list_ad <-  c("广告")
+games_data <- get.total.freqs(word_list_ad, c(1), "广告指数")
+
+data <- games_data
+save(data, file = "data.Rdata")
+```
+
+```{r, include=FALSE}
+load("data.Rdata")
+data[13:20] <- scale(data[13:20])
+data <- data[-c(1, 4, 6, 7, 10, 13, 14)]
+data <- data[sample(1:nrow(data), nrow(data)), ]
+```
+
+### 最终数据集展示
+
+```{r, echo=FALSE}
+head(data)
+```
+
+### 变量说明
+
+1. 总评分：游戏的平均评分
+2. 总评论数：游戏的总评论数
+3. 类别：游戏的类别
+4. 测试版：游戏名中是否含有“测试版”、“测试服”等词语
+5. 社交类游戏：游戏是否满足总评论数大于20000且标签中不含单机
+6. 厂商类别：腾讯和网易单独归类，Top10厂商（上榜游戏数量最多的10个厂商）中的剩下8个厂商归类为其他大厂，所有非Top10厂商归类为小厂
+7. 评论平均长度：游戏的所有评论的平均字符数
+8. 氪金指数：计算"氪", "抽", "钱", "买", "皮肤"5个词的词频（词频指游戏的所有评论中出现了该词的评论所占比例，下同），并以0.4, 0.2, 0.2, 0.1, 0.1的权重计算综合词频，最后对该列实施中心化+标准化
+9. 爆肝指数：计算"肝", "刷", "小时", "时间"4个词的词频，并以0.5, 0.2, 0.2, 0.1的权重计算综合词频，最后对该列实施中心化+标准化
+10. 游戏机制指数：计算"剧情", "难度", "玩法", "机制", "设定"5个词的平均词频，最后对该列实施中心化+标准化
+11. 艺术设计指数：计算"画风", "画面", "界面", "音乐"4个词的平均词频，最后对该列实施中心化+标准化
+12. 福利指数：计算"福利"的词频，并对该列实施中心化+标准化
+13. 广告指数：计算"广告"的词频，并对该列实施中心化+标准化
+
+***
+
+# 模型构建
+
+## 评分模型
+
+### 模型一（所有游戏）
+
+因变量：总评分
+
+自变量：类别 + 测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数
+
+```{r,warning=FALSE,message=FALSE}
+fit.1 <- lm(formula = 总评分 ~ 类别 + 测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data)
+summary(fit.1)
+regression.diagnostics(fit.1)
+```
+
+初次诊断结果：
+
+1. 样本96是比较明显的异常值。
+2. 模型存在异方差性，以下我们采用BOX-COX变换处理。
+3. 共线性检验通过。
+
+下面是处理后的模型。
+
+```{r,warning=FALSE,message=FALSE}
+b <- boxcox(总评分 ~ 类别 + 测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data, plotit = FALSE)
+lambda <- b$x[which.max(b$y)]
+
+fit.1 <- lm(formula = 总评分 ^ lambda ~ 类别 + 测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data[-96, ])
+summary(fit.1)
+regression.diagnostics(fit.1)
+```
+
+再次诊断结果：
+
+1. 异方差得到解决。
+2. 有新的异常值出现，但每去掉一次都会有新的出来，故保持仅去掉明显异常值样本96。
+
+模型解释：
+
+1. 类别、测试版、社交类游戏、评论平均长度、爆肝指数、福利指数、广告指数的系数均不显著，说明这些因素对游戏的口碑影响不大。
+2. 厂商类别方面，网易和腾讯的游戏评分显著偏低。
+3. 氪金指数的系数为负且非常显著，说明游戏的高氪金性会降低其口碑。
+4. 游戏机制指数和艺术设计指数的系数为正且较为显著，说明游戏机制和艺术设计较为客观地反映了游戏质量，进而影响游戏口碑。
+5. 广告会降低游戏的口碑。
+
+### 模型二（社交类游戏）
+
+因变量：总评分
+
+自变量：测试版 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数
+
+```{r,warning=FALSE,message=FALSE}
+fit.2 <- lm(formula = 总评分 ~ 测试版 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data[data$社交类游戏 == "是", ])
+summary(fit.2)
+```
+
+### 模型三（非社交类游戏）
+
+因变量：总评分
+
+自变量：测试版 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数
+
+```{r,warning=FALSE,message=FALSE}
+fit.3 <- lm(formula = 总评分 ~ 测试版 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data[data$社交类游戏 == "否", ][-67, ])
+summary(fit.3)
+```
+
+通过模型二与模型三的对比，我们发现：
+
+1. 社交类游戏中测试版的评分显著更高，而非社交类游戏中测试版的评分却更低（虽然不显著）。这可能是因为社交类游戏新出测试版时，玩家有尝鲜效应，大家会互相安利试玩，短时间内游戏口碑会较好。但过一段时间到正式版后，可能玩家的热情就下降了。而非社交类游戏则更注重质量，质量更好、功能更完善的正式版游戏口碑会比测试版更好。
+2. 社交类游戏中福利指数的系数为正，非社交类游戏中福利指数的系数为负，但都不显著。只能说部分印证了描述性分析中的结论。（见李望城的大作业报告）
+3. 社交类游戏中氪金并不会让游戏口碑有显著下降，非社交类游戏则会。这说明玩家比较习惯于在社交类游戏中氪金，但不喜欢在非社交类游戏中氪金。
+
+### 模型四（高氪游戏）
+
+因变量：总评分
+
+自变量：测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数
+
+```{r,warning=FALSE,message=FALSE}
+fit.4 <- lm(formula = 总评分 ~ 测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data[data$氪金指数 > quantile(data$氪金指数, 0.75), ][-5, ])
+summary(fit.4)
+```
+
+### 模型五（非高氪游戏）
+
+因变量：总评分
+
+自变量：测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数
+
+```{r,warning=FALSE,message=FALSE}
+fit.5 <- lm(formula = 总评分 ~ 测试版 + 社交类游戏 + 厂商类别 + 评论平均长度 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data[data$氪金指数 <= quantile(data$氪金指数, 0.75), ][-c(69, 45), ])
+summary(fit.5)
+```
+
+通过模型四与模型五的对比，我们发现：
+
+1. 高氪游戏中测试版游戏的评分较高，说明玩家在刚入坑时有更高的氪金冲动。
+2. 高氪游戏中社交类游戏的评分较高，这印证了模型二、三中得出的结论，即玩家比较习惯于在社交类游戏中氪金，但不喜欢在非社交类游戏中氪金。
+3. 高氪游戏中爆肝指数的系数显著为正，非高氪游戏中该系数则显著为负。这也许是因为高氪玩家对游戏的投入比较深，因此也比较能肝。而非高氪玩家则不太喜欢游戏太肝。
+4. 高氪游戏中厂商类别变量不是很显著，而非高氪游戏中该变量的系数非常显著。网易和腾讯出品的非高氪游戏口碑都较低。这也许说明这两家公司的游戏过度以赚钱为目的，很少产出低氪佳作。
+
+## 评论数模型
+
+### 模型六（所有游戏）
+
+因变量：log(总评论数)
+
+自变量：类别 + 测试版 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数
+
+```{r,warning=FALSE,message=FALSE}
+fit.6 <- lm(formula = log(总评论数) ~ 类别 + 测试版 + 厂商类别 + 评论平均长度 + 氪金指数 + 爆肝指数 + 游戏机制指数 + 艺术设计指数 + 福利指数 + 广告指数, data = data)
+summary(fit.6)
+```
+
+模型解释：
+
+1. 类别、厂商类别以及各种指数都对总评论数不太显著。
+2. 测试版游戏的评论数显著偏少，这也是合理的，因为玩的人还不多。
+3. 评论平均长度越高，该游戏的总评论数也就越多。具体而言，其他变量不变时，评论平均长度每增加一个字，游戏总评论数增加0.6%。这也许是因为，评论数多，代表该游戏有话题性。要么是接受大量赞扬，要么是引起大量争议（如原神）。这都会增加玩家的评论欲望。这也是为什么评论数与游戏的具体质量（游戏机制等等）关系不大。
+```
