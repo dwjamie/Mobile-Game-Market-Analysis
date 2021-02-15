@@ -20,25 +20,25 @@ python 3，jupyter notebook
 
 ###### 运行方式：
 
-在jupyter notebook中打开‘TapTap爬虫.ipynb’文件，直接运行。（如遇到包的缺失，请在anaconda prompt中使用pip install ’package_name‘安装）
+在jupyter notebook中打开‘TapTap爬虫.ipynb’文件，直接运行。（如遇到包的缺失，请在Terminal/Anaconda Prompt中使用pip install ’package_name‘安装）
 
 运行后将爬取相关数据，并进行预处理。文件将保存在当前目录的'taptap'文件夹下。
 
 #### 3、数据展示与分析：
 
-所有研究中使用的相关R语言代码已经整合为了一个rmd文件，并knit为一个html。
+所有研究中使用的相关R语言代码已经整合为了一个Rmd文件，并knit为一个html。
 
 ##### Rmd运行：
 
 ###### 环境依赖：
 
-R 3.6.3，Rstudio
+R 3.6.3，RStudio
 
 ###### 运行方式：
 
 确保相关文件（停用词表、数据集等）放置到默认目录下，数据集需要移出'taptap'文件夹。
 
-在Rstudio中打开 '数据分析报告.Rmd'，即可根据需要按照顺序运行。如有包缺失，请使用install.packages('package_name')安装。
+在RStudio中打开 '数据分析报告.Rmd'，即可根据需要按照顺序运行。如有包缺失，请使用install.packages('package_name')安装。
 
 #### 4、目录结构描述：
 
@@ -47,6 +47,7 @@ R 3.6.3，Rstudio
 |—stopwords.dat
 
 |—stopwordslist.csv
+
 |—tags.csv
 
 |—taptap_data.xls
